@@ -1,0 +1,149 @@
+@import "tailwindcss";
+
+/* Force modern sans-serif font family globally */
+body, button, input, select, textarea, span, div, p, h1, h2, h3, h4, h5, h6, table, th, td, a {
+  font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+}
+
+/* Global Dark Mode Overrides */
+body {
+  background-color: #070a13 !important;
+  color: #f1f5f9 !important;
+}
+
+/* Card overrides: Dark Slate Background, Thin borders, glowing shadows */
+.bg-white, .card-premium, [class*="bg-white"], .bg-slate-50, .bg-gray-50, .bg-gray-100 {
+  background-color: #0d1321 !important;
+  color: #f1f5f9 !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.3) !important;
+  border-radius: 16px !important;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.bg-white:hover, .card-premium:hover, [class*="bg-white"]:hover {
+  border-color: rgba(6, 182, 212, 0.3) !important;
+  box-shadow: 0 0 20px 0 rgba(6, 182, 212, 0.1) !important;
+  transform: translateY(-2px) !important;
+}
+
+/* Standard panel borders */
+.border-gray-200, .border-slate-200, .border-gray-100, .border-slate-100, .border {
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Sidebar item backgrounds */
+.bg-gray-50, .bg-slate-50, .bg-gray-100, .bg-slate-100, .bg-opd-bg, [class*="bg-slate-100"], [class*="bg-gray-50"] {
+  background-color: #070a13 !important;
+}
+
+/* Modern clean inputs for dark theme */
+input[type="text"], input[type="email"], input[type="password"], input[type="date"], select, textarea, .form-input {
+  background-color: #121826 !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  color: #f1f5f9 !important;
+  border-radius: 12px !important;
+  padding: 10px 14px !important;
+  font-size: 0.875rem !important;
+  transition: all 0.15s ease-in-out !important;
+}
+
+input[type="text"]:focus, input[type="email"]:focus, input[type="password"]:focus, input[type="date"]:focus, select:focus, textarea:focus, .form-input:focus {
+  border-color: #06b6d4 !important;
+  box-shadow: 0 0 0 4px rgba(6, 182, 212, 0.18) !important;
+  background-color: #121826 !important;
+  outline: none !important;
+}
+
+/* Text color adaptations */
+.text-gray-900, .text-slate-900, .text-gray-800, .text-slate-800, h1, h2, h3, h4, h5, h6 {
+  color: #f8fafc !important;
+}
+
+.text-gray-700, .text-slate-700, .text-gray-600, .text-slate-600 {
+  color: #cbd5e1 !important;
+}
+
+.text-gray-500, .text-slate-500, .text-opd-text-secondary {
+  color: #94a3b8 !important;
+}
+
+.text-opd-text-muted, .text-gray-400 {
+  color: #64748b !important;
+}
+
+/* Glowing Neon Buttons */
+.btn-primary, button[class*="bg-opd-primary"], button[class*="bg-emerald-600"] {
+  background: linear-gradient(135deg, #06b6d4 0%, #0891b2 100%) !important;
+  color: #ffffff !important;
+  border: none !important;
+  box-shadow: 0 4px 14px 0 rgba(6, 182, 212, 0.3) !important;
+  border-radius: 12px !important;
+  font-weight: 600 !important;
+}
+
+.btn-primary:hover:not(:disabled), button[class*="bg-opd-primary"]:hover:not(:disabled) {
+  background: linear-gradient(135deg, #0891b2 0%, #0e7490 100%) !important;
+  box-shadow: 0 6px 20px 0 rgba(6, 182, 212, 0.45) !important;
+  transform: translateY(-1px) !important;
+}
+
+.btn-secondary, button[class*="bg-white"]:not(.btn-primary) {
+  background-color: #121826 !important;
+  color: #06b6d4 !important;
+  border: 1px solid rgba(6, 182, 212, 0.3) !important;
+  box-shadow: none !important;
+}
+
+.btn-secondary:hover:not(:disabled), button[class*="bg-white"]:not(.btn-primary):hover {
+  background-color: rgba(6, 182, 212, 0.05) !important;
+  border-color: #06b6d4 !important;
+}
+
+/* Glassmorphism Header */
+header, [class*="border-b bg-white"] {
+  background: rgba(13, 19, 33, 0.8) !important;
+  backdrop-filter: blur(12px) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+/* Badges styling */
+.ai-suggestion-label, [class*="bg-blue-50 text-blue-700"] {
+  background-color: rgba(6, 182, 212, 0.08) !important;
+  color: #06b6d4 !important;
+  border: 1px solid rgba(6, 182, 212, 0.2) !important;
+}
+
+[class*="bg-emerald-50 text-emerald-700"] {
+  background-color: rgba(16, 185, 129, 0.08) !important;
+  color: #10b981 !important;
+  border: 1px solid rgba(16, 185, 129, 0.2) !important;
+}
+
+[class*="bg-amber-50 text-amber-700"] {
+  background-color: rgba(245, 158, 11, 0.08) !important;
+  color: #f59e0b !important;
+  border: 1px solid rgba(245, 158, 11, 0.2) !important;
+}
+
+/* Step Wizard details */
+[class*="bg-emerald-500"] {
+  background-color: #10b981 !important;
+  color: #ffffff !important;
+}
+
+/* Scrollbar styles */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
