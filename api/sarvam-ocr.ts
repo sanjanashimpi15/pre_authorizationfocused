@@ -1,4 +1,9 @@
 import JSZip from 'jszip';
+import dns from 'dns';
+
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch (e) {}
 
 export const config = {
   maxDuration: 120, // OCR job polling might take some time

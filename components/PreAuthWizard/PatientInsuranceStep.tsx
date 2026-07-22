@@ -384,13 +384,26 @@ export const PatientInsuranceStep: React.FC<PatientInsuranceStepProps> = ({
 
             // Real stage progress from the actual pipeline (documentExtractionService),
             // the same onProgress hook Screen 3 uses — not a simulated timer.
-            const extracted = await extractFromDocument(file, pages, (stage) => {
+            const extracted = await extractFromDocument(file, pages, (stage, detail, pageIndex, pageStatus) => {
                 setExtractionStage(stage);
-                log(
-                    stage === 'ocr' ? 'OCR Running — extracting text from each page...' :
-                    stage === 'classifying' ? 'Classifying document type...' :
-                    'Extracting patient & insurance information...'
-                );
+                if (detail) {
+                    log(detail);
+                } else {
+                    log(
+                        stage === 'ocr' ? 'OCR Running — extracting text from each page...' :
+                        stage === 'classifying' ? 'Classifying document type...' :
+                        'Extracting patient & insurance information...'
+                    );
+                }
+                if (pageIndex && pageStatus) {
+                    setPageStates(prev => ({
+                        ...prev,
+                        [pageIndex]: {
+                            ...prev[pageIndex],
+                            status: pageStatus
+                        }
+                    }));
+                }
             });
 
             log(`Google Vision & Gemini extraction completed.`);

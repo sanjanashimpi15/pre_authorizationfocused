@@ -1,3 +1,9 @@
+import dns from 'dns';
+
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch (e) {}
+
 export const config = {
   maxDuration: 60,
 };

@@ -411,7 +411,7 @@ function mapLocalPipelineOutput(pythonOutput: any, markdownText: string) {
 export const extractFromDocument = async (
     file: File,
     pages?: SplitPage[],
-    onProgress?: (stage: ExtractionProgressStage) => void
+    onProgress?: (stage: ExtractionProgressStage, detail?: string, pageIndex?: number, pageStatus?: 'OCR Processing' | 'Completed' | 'Failed') => void
 ): Promise<ExtractedPatientData & { ocrPages: Record<string, string> }> => {
     const hasDemoDoc = file.name.toLowerCase().includes('demo') ||
         file.name.toLowerCase().includes('report') ||
@@ -546,12 +546,89 @@ export const extractFromDocument = async (
             }
         }
 
-        // Process OCR pages in chunks of <= 10
+        // Helper to compress a PDF page to JPEG and back to a single-page PDF if it exceeds size limits
+        const compressPdfPage = async (page: SplitPage): Promise<string> => {
+            try {
+                console.log(`[documentExtractionService] Compressing Page ${page.index} (original base64 length: ${page.base64Data.length})...`);
+                const binary = atob(page.base64Data);
+                const len = binary.length;
+                const bytes = new Uint8Array(len);
+                for (let i = 0; i < len; i++) {
+                    bytes[i] = binary.charCodeAt(i);
+                }
+                
+                const pdf = await pdfjsLib.getDocument({
+                    data: bytes,
+                    useSystemFonts: true,
+                    disableFontFace: true,
+                }).promise;
+                
+                const pdfPage = await pdf.getPage(1);
+                const unscaledViewport = pdfPage.getViewport({ scale: 1 });
+                const scale = 1200 / unscaledViewport.width;
+                const viewport = pdfPage.getViewport({ scale });
+
+                const canvas = document.createElement('canvas');
+                canvas.width = viewport.width;
+                canvas.height = viewport.height;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) throw new Error("Could not get 2d context for compression canvas");
+                
+                await pdfPage.render({ canvasContext: ctx, viewport }).promise;
+                const jpegDataUrl = canvas.toDataURL('image/jpeg', 0.75);
+                const jpegBase64 = jpegDataUrl.split(',')[1];
+                const jpegBytes = new Uint8Array(atob(jpegBase64).split('').map(c => c.charCodeAt(0)));
+
+                const compressedDoc = await PDFDocument.create();
+                const embeddedJpg = await compressedDoc.embedJpg(jpegBytes);
+                const pageObj = compressedDoc.addPage([viewport.width, viewport.height]);
+                pageObj.drawImage(embeddedJpg, { x: 0, y: 0, width: viewport.width, height: viewport.height });
+                const compressedPdfBytes = await compressedDoc.save();
+
+                let compressedBinary = '';
+                const compBytes = new Uint8Array(compressedPdfBytes);
+                const compLen = compBytes.byteLength;
+                for (let j = 0; j < compLen; j++) {
+                    compressedBinary += String.fromCharCode(compBytes[j]);
+                }
+                const compressedBase64 = btoa(compressedBinary);
+                console.log(`[documentExtractionService] Page ${page.index} compressed successfully. New base64 length: ${compressedBase64.length}`);
+                return compressedBase64;
+            } catch (err: any) {
+                console.error(`[documentExtractionService] Failed to compress Page ${page.index}, using original:`, err);
+                return page.base64Data;
+            }
+        };
+
+        // Process OCR pages in size-aware chunks
         if (pagesNeedingOcr.length > 0) {
-            const chunkSize = 10;
             const chunks: SplitPage[][] = [];
-            for (let i = 0; i < pagesNeedingOcr.length; i += chunkSize) {
-                chunks.push(pagesNeedingOcr.slice(i, i + chunkSize));
+            let currentChunk: SplitPage[] = [];
+            let currentChunkSize = 0;
+
+            for (const page of pagesNeedingOcr) {
+                let pageBase64 = page.base64Data;
+                // If single page base64 is larger than 3,000,000 chars (~2.25MB raw PDF), compress it
+                if (pageBase64.length > 3000000) {
+                    pageBase64 = await compressPdfPage(page);
+                }
+
+                // If adding this page would exceed 10 pages OR 3.3 million chars (~2.5MB raw), start a new chunk
+                if (currentChunk.length >= 10 || (currentChunkSize + pageBase64.length) > 3300000) {
+                    chunks.push(currentChunk);
+                    currentChunk = [];
+                    currentChunkSize = 0;
+                }
+
+                currentChunk.push({
+                    ...page,
+                    base64Data: pageBase64
+                });
+                currentChunkSize += pageBase64.length;
+            }
+
+            if (currentChunk.length > 0) {
+                chunks.push(currentChunk);
             }
 
             const ocrClient = getSarvamOcrClient();
@@ -560,34 +637,68 @@ export const extractFromDocument = async (
                 const chunkPages = chunks[cIdx];
                 console.log(`[documentExtractionService] Processing Sarvam OCR chunk ${cIdx + 1}/${chunks.length} containing pages:`, chunkPages.map(p => p.index));
 
-                // Load and merge page PDFs into a single chunk PDF
-                const subDoc = await PDFDocument.create();
-                for (const page of chunkPages) {
-                    const pageBytes = new Uint8Array(atob(page.base64Data).split('').map(c => c.charCodeAt(0)));
-                    const tempDoc = await PDFDocument.load(pageBytes);
-                    const [copiedPage] = await subDoc.copyPages(tempDoc, [0]);
-                    subDoc.addPage(copiedPage);
-                }
-                const subPdfBytes = await subDoc.save();
-                let binary = '';
-                const bytes = new Uint8Array(subPdfBytes);
-                const len = bytes.byteLength;
-                for (let j = 0; j < len; j++) {
-                    binary += String.fromCharCode(bytes[j]);
-                }
-                const chunkBase64 = btoa(binary);
-
-                // Call Sarvam OCR proxy
-                const ocrResult = await ocrClient.extractText(chunkBase64, `chunk_${cIdx + 1}.pdf`);
-                
-                // Map sub-PDF page indices back to original indices
-                Object.entries(ocrResult.pageTexts || {}).forEach(([subPageStr, text]) => {
-                    const subPageNum = parseInt(subPageStr);
-                    const originalPage = chunkPages[subPageNum - 1];
-                    if (originalPage) {
-                        ocrPages[String(originalPage.index)] = text as string;
-                    }
+                // Send progress of processing for each page in chunk
+                chunkPages.forEach(p => {
+                    onProgress?.(
+                        'ocr',
+                        `OCR page ${p.index}/${pagesToProcess.length} in progress...`,
+                        p.index,
+                        'OCR Processing'
+                    );
                 });
+
+                try {
+                    // Load and merge page PDFs into a single chunk PDF
+                    const subDoc = await PDFDocument.create();
+                    for (const page of chunkPages) {
+                        const pageBytes = new Uint8Array(atob(page.base64Data).split('').map(c => c.charCodeAt(0)));
+                        const tempDoc = await PDFDocument.load(pageBytes);
+                        const [copiedPage] = await subDoc.copyPages(tempDoc, [0]);
+                        subDoc.addPage(copiedPage);
+                    }
+                    const subPdfBytes = await subDoc.save();
+                    let binary = '';
+                    const bytes = new Uint8Array(subPdfBytes);
+                    const len = bytes.byteLength;
+                    for (let j = 0; j < len; j++) {
+                        binary += String.fromCharCode(bytes[j]);
+                    }
+                    const chunkBase64 = btoa(binary);
+
+                    // Call Sarvam OCR proxy
+                    const ocrResult = await ocrClient.extractText(chunkBase64, `chunk_${cIdx + 1}.pdf`);
+                    
+                    // Map sub-PDF page indices back to original indices
+                    Object.entries(ocrResult.pageTexts || {}).forEach(([subPageStr, text]) => {
+                        const subPageNum = parseInt(subPageStr);
+                        const originalPage = chunkPages[subPageNum - 1];
+                        if (originalPage) {
+                            ocrPages[String(originalPage.index)] = text as string;
+                        }
+                    });
+
+                    // Mark completed successfully
+                    chunkPages.forEach(p => {
+                        onProgress?.(
+                            'ocr',
+                            `OCR page ${p.index}/${pagesToProcess.length} completed`,
+                            p.index,
+                            'Completed'
+                        );
+                    });
+                } catch (err: any) {
+                    // Mark failed upon error
+                    chunkPages.forEach(p => {
+                        onProgress?.(
+                            'ocr',
+                            `OCR page ${p.index}/${pagesToProcess.length} failed`,
+                            p.index,
+                            'Failed'
+                        );
+                    });
+                    const failedPagesDesc = chunkPages.map(p => p.index).join(', ');
+                    throw new Error(`Sarvam OCR failed on Page(s) [${failedPagesDesc}]: ${err.message || err}`);
+                }
             }
         }
 
