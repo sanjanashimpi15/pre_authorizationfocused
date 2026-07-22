@@ -11,27 +11,26 @@ import { classifyGeminiError, geminiErrorUserMessage, GeminiErrorKind } from '..
 interface PatientInsuranceStepProps {
     patient: Partial<PatientRecord>;
     insurance: Partial<InsurancePolicyDetails>;
+    clinical?: Partial<ClinicalDetails>;
     onPatientChange: (p: Partial<PatientRecord>) => void;
     onInsuranceChange: (ins: Partial<InsurancePolicyDetails>) => void;
+    onClinicalChange?: (c: Partial<ClinicalDetails>) => void;
     onNext: () => void;
     uploadedDocuments?: WizardDocument[];
     onDocumentsChange?: (docs: WizardDocument[]) => void;
-    // Bundles patient + insurance + documents into ONE parent state update instead of
-    // three separate ones — avoids three concurrent savePreAuth calls racing to persist
-    // (last write wins), which could otherwise drop an earlier partial from storage even
-    // though in-memory state converges correctly. Used only by the extraction-completion
-    // path below; manual single-field edits elsewhere still use the individual callbacks.
     onExtractionComplete?: (
         patient: Partial<PatientRecord>,
         insurance: Partial<InsurancePolicyDetails>,
-        docs: WizardDocument[]
+        docs: WizardDocument[],
+        clinical?: Partial<ClinicalDetails>
     ) => void;
     onExtractingChange?: (isExtracting: boolean) => void;
+    onOcrDoneChange?: (isDone: boolean) => void;
 }
 
 export const PatientInsuranceStep: React.FC<PatientInsuranceStepProps> = ({
-    patient, insurance, onPatientChange, onInsuranceChange, onNext, uploadedDocuments = [], onDocumentsChange,
-    onExtractionComplete, onExtractingChange
+    patient, insurance, clinical = {}, onPatientChange, onInsuranceChange, onClinicalChange, onNext, uploadedDocuments = [], onDocumentsChange,
+    onExtractionComplete, onExtractingChange, onOcrDoneChange
 }) => {
     const [entryPath, setEntryPath] = useState<EntryPath | null>(insurance.policyNumber ? 'manual' : null);
     const [isExtractingState, setIsExtractingState] = useState(false);
@@ -40,6 +39,71 @@ export const PatientInsuranceStep: React.FC<PatientInsuranceStepProps> = ({
         if (onExtractingChange) onExtractingChange(loading);
     };
     const [ocrDone, setOcrDone] = useState(false);
+    const [isListening, setIsListening] = useState(false);
+    const recognitionRef = useRef<any>(null);
+
+    const toggleListening = () => {
+        const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            alert("Speech recognition is not supported in this browser. Please use Chrome.");
+            return;
+        }
+
+        if (isListening) {
+            if (recognitionRef.current) {
+                recognitionRef.current.stop();
+                recognitionRef.current = null;
+            }
+            setIsListening(false);
+            return;
+        }
+
+        try {
+            const rec = new SpeechRecognition();
+            rec.lang = 'en-IN';
+            rec.continuous = true;
+            rec.interimResults = true;
+
+            let initialNote = clinical.additionalClinicalNotes || '';
+            if (initialNote && !initialNote.endsWith(' ')) {
+                initialNote += ' ';
+            }
+
+            rec.onresult = (e: any) => {
+                let transcriptText = '';
+                for (let i = e.resultIndex; i < e.results.length; i++) {
+                    if (e.results[i].isFinal) {
+                        transcriptText += e.results[i][0].transcript + ' ';
+                    }
+                }
+                if (transcriptText) {
+                    const updated = initialNote + transcriptText;
+                    if (onClinicalChange) {
+                        onClinicalChange({ ...clinical, additionalClinicalNotes: updated });
+                    }
+                }
+            };
+
+            rec.onerror = (err: any) => {
+                console.warn('[InlineMic] Speech error:', err);
+                if (err.error !== 'no-speech' && err.error !== 'aborted') {
+                    setIsListening(false);
+                }
+            };
+
+            rec.onend = () => {
+                setIsListening(false);
+                recognitionRef.current = null;
+            };
+
+            rec.start();
+            recognitionRef.current = rec;
+            setIsListening(true);
+        } catch (err) {
+            console.error('[InlineMic] Failed to start recognition:', err);
+            setIsListening(false);
+        }
+    };
     const [searchQuery, setSearchQuery] = useState('');
     const [searchResults, setSearchResults] = useState<PatientRecord[]>([]);
     const [searching, setSearching] = useState(false);
@@ -398,13 +462,32 @@ export const PatientInsuranceStep: React.FC<PatientInsuranceStepProps> = ({
             };
             const updatedDocuments = [...uploadedDocuments, newDoc];
 
+            // Strategy B: Merge pre-existing user clinical note with OCR-extracted clinical excerpts
+            const userNote = (clinical.additionalClinicalNotes || '').trim();
+            const ocrNote = (extracted.clinical_excerpts || []).join('\n').trim();
+            let mergedNotes = userNote;
+            if (ocrNote) {
+                if (userNote) {
+                    if (!userNote.includes('[Extracted from Uploaded Document]')) {
+                        mergedNotes = `${userNote}\n\n---\n[Extracted from Uploaded Document]\n${ocrNote}`;
+                    }
+                } else {
+                    mergedNotes = ocrNote;
+                }
+            }
+            const updatedClinical: Partial<ClinicalDetails> = {
+                ...clinical,
+                additionalClinicalNotes: mergedNotes
+            };
+
             // Single bundled update — see onExtractionComplete's doc comment for why this
             // replaced three separate onPatientChange/onInsuranceChange/onDocumentsChange calls.
             if (onExtractionComplete) {
-                onExtractionComplete(updatedPatient, updatedInsurance, updatedDocuments);
+                onExtractionComplete(updatedPatient, updatedInsurance, updatedDocuments, updatedClinical);
             } else {
                 onPatientChange(updatedPatient);
                 onInsuranceChange(updatedInsurance);
+                if (onClinicalChange) onClinicalChange(updatedClinical);
                 if (onDocumentsChange) onDocumentsChange(updatedDocuments);
             }
 
@@ -428,6 +511,7 @@ export const PatientInsuranceStep: React.FC<PatientInsuranceStepProps> = ({
             });
 
             setOcrDone(true);
+            if (onOcrDoneChange) onOcrDoneChange(true);
             setEntryPath('manual');
         } catch (error: any) {
             // Mark all non-completed pages as Failed
@@ -454,6 +538,12 @@ export const PatientInsuranceStep: React.FC<PatientInsuranceStepProps> = ({
         }
     };
 
+    const handleResetEntryPath = () => {
+        setEntryPath(null);
+        setOcrDone(false);
+        if (onOcrDoneChange) onOcrDoneChange(false);
+    };
+
     const isValid = !!(
         patient.patientName && patient.age && patient.gender && patient.mobileNumber && patient.city && patient.state &&
         (insurance.insurerName || insurance.tpaName) && insurance.policyNumber && insurance.sumInsured
@@ -464,9 +554,50 @@ export const PatientInsuranceStep: React.FC<PatientInsuranceStepProps> = ({
             <div className="space-y-6 text-opd-text-primary bg-white p-6 rounded-2xl border border-opd-border shadow-sm">
                 <input ref={fileRef} type="file" accept="image/*,.pdf" className="hidden"
                     onChange={e => e.target.files?.[0] && handleDocumentUpload(e.target.files[0])} />
+
+                {/* ── Section A: Clinical Note (Top) ──────────────────────── */}
+                <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                        <label className="text-sm font-bold font-lora text-opd-primary">Clinical Note</label>
+                        <span className="text-[11px] text-opd-text-secondary">Type or paste clinical notes, or use the microphone to dictate.</span>
+                    </div>
+                    <div className="relative w-full">
+                        <textarea
+                            value={clinical.additionalClinicalNotes || ''}
+                            onChange={e => onClinicalChange && onClinicalChange({ ...clinical, additionalClinicalNotes: e.target.value })}
+                            placeholder="Add the patient's clinical notes, presenting complaints, history, diagnosis, investigations, treatment plan, etc."
+                            rows={8}
+                            className="w-full form-input pr-12 text-xs font-mono leading-relaxed resize-y overflow-y-auto"
+                        />
+                        <button
+                            type="button"
+                            onClick={toggleListening}
+                            title={isListening ? "Stop voice dictation" : "Dictate clinical notes with microphone"}
+                            className={`absolute right-3 bottom-3 p-2 rounded-full border transition-all duration-150 flex items-center justify-center ${
+                                isListening
+                                    ? 'bg-rose-50 border-rose-300 text-rose-600 animate-pulse shadow-sm'
+                                    : 'bg-opd-input-bg border-opd-border text-opd-text-secondary hover:text-opd-primary hover:border-opd-primary/30'
+                            }`}
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
+                            </svg>
+                        </button>
+                    </div>
+                    {isListening && (
+                        <div className="text-[10px] text-rose-600 font-bold flex items-center gap-1.5 font-mono">
+                            <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+                            Listening... Speak patient clinical details clearly
+                        </div>
+                    )}
+                </div>
+
+                <hr className="border-opd-border" />
+
+                {/* ── Section B: Patient & Insurance Details ─────────────── */}
                 <div>
-                    <h2 className="text-lg font-bold font-lora text-opd-primary">Patient & Insurance Details</h2>
-                    <p className="text-opd-text-secondary text-sm mt-1">Select an option to begin entering information</p>
+                    <h2 className="text-sm font-bold font-lora text-opd-primary">Patient & Insurance Details</h2>
+                    <p className="text-opd-text-secondary text-xs mt-0.5">How would you like to add patient & insurance information?</p>
                 </div>
                 <div className="grid grid-cols-3 gap-4">
                     {[
@@ -528,7 +659,7 @@ export const PatientInsuranceStep: React.FC<PatientInsuranceStepProps> = ({
     if (entryPath === 'search_existing') {
         return (
             <div className="space-y-6 text-opd-text-primary bg-white p-6 rounded-2xl border border-opd-border shadow-sm">
-                <button onClick={() => setEntryPath(null)} className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5" type="button">
+                <button onClick={handleResetEntryPath} className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5" type="button">
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
                     </svg>
@@ -597,7 +728,7 @@ export const PatientInsuranceStep: React.FC<PatientInsuranceStepProps> = ({
     if (entryPath === 'scan_card' && !ocrDone) {
         return (
             <div className="space-y-6 bg-white p-6 rounded-2xl border border-opd-border shadow-sm text-opd-text-primary">
-                <button onClick={() => setEntryPath(null)} className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5">
+                <button onClick={handleResetEntryPath} className="btn-secondary px-3 py-1.5 text-xs flex items-center gap-1.5">
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
                     </svg>
@@ -745,7 +876,7 @@ export const PatientInsuranceStep: React.FC<PatientInsuranceStepProps> = ({
                 <div>
                     <h2 className="text-sm font-semibold text-opd-primary font-lora uppercase tracking-wider">Patient & Insurance Details</h2>
                 </div>
-                <button onClick={() => setEntryPath(null)} className="text-xs text-opd-primary hover:text-opd-primary-dark font-semibold transition-colors underline" type="button">Change Entry Method</button>
+                <button onClick={handleResetEntryPath} className="text-xs text-opd-primary hover:text-opd-primary-dark font-semibold transition-colors underline" type="button">Change Entry Method</button>
             </div>
 
             {/* Extraction Results Summary */}

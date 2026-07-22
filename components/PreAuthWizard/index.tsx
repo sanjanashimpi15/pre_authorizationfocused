@@ -8,7 +8,6 @@ import { PatientInsuranceStep } from './PatientInsuranceStep';
 import { ClinicalDetailsStep } from './ClinicalDetailsStep';
 import { AdmissionCostStep } from './AdmissionCostStep';
 import { DocumentsGenerateStep } from './DocumentsGenerateStep';
-import { VoiceDictationMode } from './VoiceDictationMode';
 import { ClaimReadinessRail } from './ClaimReadinessRail';
 import { VoiceExtractedData } from '../../services/voiceDictationService';
 import { savePreAuth, savePatient, generatePreAuthId, generatePatientId } from '../../services/masterPatientRecord';
@@ -122,7 +121,7 @@ export const PreAuthWizard: React.FC<PreAuthWizardProps> = ({
         const savedStep = typeof window !== 'undefined' ? localStorage.getItem('aivana_active_step') : null;
         return savedStep ? (Math.min(Math.max(parseInt(savedStep, 10), 1), 4) as any) : (startAtStep as any);
     });
-    const [showVoiceMode, setShowVoiceMode] = useState(false);
+    const [isStep1OcrDone, setIsStep1OcrDone] = useState(false);
     const [isStep1Extracting, setIsStep1Extracting] = useState(false);
     // TPA report — hoisted here so the rail shows on all steps
     const [tpaReport, setTpaReport] = useState<EvidenceReviewReport | null>(null);
@@ -166,9 +165,8 @@ export const PreAuthWizard: React.FC<PreAuthWizardProps> = ({
     // ── Rail visibility: hide on Step 1 until a real extraction score exists ──
     // On step 1: only show AFTER extraction completes AND we're not mid-scan.
     // On steps 2–4: always show.
-    const hasPopulatedData = !!(record.patient?.patientName || record.insurance?.insurerName);
     const showReadinessRail = step === 1
-        ? (hasPopulatedData && !isStep1Extracting)
+        ? (isStep1OcrDone && !isStep1Extracting)
         : true;
 
     const recordRef = useRef<Partial<PreAuthRecord>>(record);
@@ -354,48 +352,9 @@ export const PreAuthWizard: React.FC<PreAuthWizardProps> = ({
         setRecord(updated);
         try { await savePreAuth(updated as PreAuthRecord); } catch (e) { /**/ }
         setSaving(false);
-        setShowVoiceMode(false);
         // Jump straight to Documents & Generate — all data is pre-filled
         setStep(4);
     };
-
-    // ── Voice dictation overlay ─────────────────────────────────────────────────
-    if (showVoiceMode) {
-        return (
-            <div className="fixed inset-0 z-50 flex items-start justify-center bg-opd-text-primary/45 backdrop-blur-sm overflow-y-auto">
-                <div className="bg-white border border-opd-border rounded-2xl w-full max-w-3xl my-8 mx-4 shadow-2xl overflow-hidden text-opd-text-primary">
-                    <div className="flex items-center justify-between px-6 py-4 border-b border-opd-border bg-opd-input-bg">
-                        <div className="flex items-center gap-3">
-                            <span className="font-bold text-sm text-opd-text-primary font-lora">Voice Dictation</span>
-                            <span className="font-mono text-xs px-2 py-0.5 bg-white border border-opd-border text-opd-text-secondary rounded-md select-all">{record.id}</span>
-                        </div>
-                        <div className="flex items-center gap-4">
-                            {saving && (
-                                <span className="text-[11px] text-opd-text-secondary flex items-center gap-1.5">
-                                    <svg className="w-3.5 h-3.5 animate-spin text-opd-primary" fill="none" viewBox="0 0 24 24">
-                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                                    </svg>
-                                    Saving...
-                                </span>
-                            )}
-                            <button onClick={onClose} className="text-opd-text-secondary hover:text-opd-primary p-1 rounded-lg hover:bg-opd-bg transition-colors" type="button">
-                                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                            </button>
-                        </div>
-                    </div>
-                    <div className="px-6 py-6 bg-white">
-                        <VoiceDictationMode
-                            onComplete={handleVoiceComplete}
-                            onCancel={() => setShowVoiceMode(false)}
-                        />
-                    </div>
-                </div>
-            </div>
-        );
-    }
 
     return (
         <div className="fixed inset-0 z-50 flex items-start justify-center bg-opd-text-primary/45 backdrop-blur-sm overflow-y-auto">
@@ -433,32 +392,6 @@ export const PreAuthWizard: React.FC<PreAuthWizardProps> = ({
                     </div>
                 </div>
 
-                {/* Voice Dictation Banner — shown on step 1 */}
-                {step === 1 && (
-                    <div className="mx-6 mt-5 bg-primary-tint/30 border border-opd-primary/20 rounded-xl p-4 flex items-center justify-between shadow-sm">
-                        <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-primary-tint flex items-center justify-center text-opd-primary shadow-sm">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" />
-                                </svg>
-                            </div>
-                            <div>
-                                <div className="text-xs font-bold text-opd-primary flex items-center gap-1.5 font-lora">
-                                    Voice Dictation
-                                    <span className="text-[9px] uppercase tracking-wider bg-primary-tint text-opd-primary px-1.5 py-0.5 rounded font-extrabold font-sans border border-opd-primary/20">AI-Assistant</span>
-                                </div>
-                                <div className="text-[11px] text-opd-text-secondary mt-0.5">Speak patient notes to automatically populate clinical fields.</div>
-                            </div>
-                        </div>
-                        <button
-                            onClick={() => setShowVoiceMode(true)}
-                            className="btn-primary"
-                            type="button">
-                            Start Dictating
-                        </button>
-                    </div>
-                )}
-
                 {/* ── Two-column body: main content + persistent rail ── */}
                 <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
 
@@ -475,13 +408,16 @@ export const PreAuthWizard: React.FC<PreAuthWizardProps> = ({
                                 <PatientInsuranceStep
                                     patient={record.patient ?? {}}
                                     insurance={record.insurance ?? {}}
+                                    clinical={record.clinical ?? {}}
                                     onPatientChange={p => updateRecord({ patient: p })}
                                     onInsuranceChange={ins => updateRecord({ insurance: ins })}
+                                    onClinicalChange={c => updateRecord({ clinical: c })}
                                     onNext={handleNext}
                                     uploadedDocuments={record.uploadedDocuments ?? []}
                                     onDocumentsChange={docs => updateRecord({ uploadedDocuments: docs })}
-                                    onExtractionComplete={(p, ins, docs) => updateRecord({ patient: p, insurance: ins, uploadedDocuments: docs })}
+                                    onExtractionComplete={(p, ins, docs, clin) => updateRecord({ patient: p, insurance: ins, uploadedDocuments: docs, ...(clin ? { clinical: clin } : {}) })}
                                     onExtractingChange={setIsStep1Extracting}
+                                    onOcrDoneChange={setIsStep1OcrDone}
                                 />
                             )}
                             {step === 2 && (
